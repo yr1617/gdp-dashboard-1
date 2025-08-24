@@ -1,151 +1,70 @@
+# streamlit_app.py
+
 import streamlit as st
-import pandas as pd
-import math
-from pathlib import Path
+import requests  # 외부 API와 통신하기 위한 라이브러리
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
-)
+# 동물 사진을 가져오는 API 엔드포인트(URL)를 딕셔너리로 관리
+ANIMAL_API_URLS = {
+    '강아지': 'https://random.dog/woof.json',    # 랜덤 강아지 사진 API
+    '고양이': 'https://aws.random.cat/meow',    # 랜덤 고양이 사진 API. [1]
+    '여우': 'https://randomfox.ca/floof/'        # 랜덤 여우 사진 API. [2]
+}
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
+# 각 API 응답에서 이미지 URL이 담긴 키의 이름이 다르므로, 이를 매핑
+ANIMAL_API_KEYS = {
+    '강아지': 'url',
+    '고양이': 'file',
+    '여우': 'image'
+}
 
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
-
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
+def get_random_animal_image(animal_name):
     """
+    선택된 동물의 랜덤 이미지 URL을 API를 통해 가져오는 함수.
+    성공 시 이미지 URL을, 실패 시 None을 반환합니다.
+    """
+    api_url = ANIMAL_API_URLS.get(animal_name)
+    key_name = ANIMAL_API_KEYS.get(animal_name)
 
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
+    if not api_url or not key_name:
+        return None
 
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
+    try:
+        # 해당 API에 GET 요청을 보냄 (5초 타임아웃)
+        response = requests.get(api_url, timeout=5)
+        # 응답 상태 코드가 200 (성공)이 아니면 예외 발생
+        response.raise_for_status()
+        # 응답받은 JSON 데이터에서 이미지 URL을 추출
+        data = response.json()
+        return data.get(key_name)
+    except requests.exceptions.RequestException as e:
+        # 네트워크 오류나 API 서버 문제 발생 시 에러 메시지 반환
+        st.error(f"API 요청 중 오류가 발생했습니다: {e}")
+        return None
 
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
 
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
+# --- Streamlit 앱 UI 구성 ---
 
-    return gdp_df
+# 1. 앱 제목 설정
+st.title("🐾 랜덤 동물 사진 생성기")
 
-gdp_df = get_gdp_data()
-
-# -----------------------------------------------------------------------------
-# Draw the actual page
-
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
-
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
-
-# Add some spacing
-''
-''
-
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
-
-st.header('GDP over time', divider='gray')
-
-''
-
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
+# 2. 동물 선택 드롭다운 메뉴 생성
+# ANIMAL_API_URLS 딕셔너리의 키들('강아지', '고양이', '여우')을 선택 옵션으로 사용
+selected_animal = st.selectbox(
+    "보고 싶은 동물을 선택하세요!",
+    list(ANIMAL_API_URLS.keys())
 )
 
-''
-''
+# 3. '랜덤 사진 생성' 버튼 생성
+if st.button("랜덤 사진 생성 ✨"):
+    # 버튼이 클릭되면 로딩 스피너를 표시
+    with st.spinner(f'{selected_animal} 사진을 불러오는 중...'):
+        # 위에서 정의한 함수를 호출하여 이미지 URL을 가져옴
+        image_url = get_random_animal_image(selected_animal)
 
-
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
-
-st.header(f'GDP in {to_year}', divider='gray')
-
-''
-
-cols = st.columns(4)
-
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
-
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
+        if image_url:
+            # 이미지 URL을 성공적으로 가져왔다면 화면에 이미지 표시
+            st.image(image_url, caption=f"짜잔! 귀여운 {selected_animal} 사진이에요!")
         else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
-
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
-        )
+            # 이미지 URL을 가져오지 못했다면 에러 메시지 표시
+            st.error("사진을 불러오는 데 실패했습니다. 다시 시도해 주세요.")
+            
